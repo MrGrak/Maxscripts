@@ -1,0 +1,14 @@
+(
+    local bgWorkerThread = dotnetobject "CSharpUtilities.SynchronizingBackgroundWorker"
+
+    bgWorkerThread.WorkerSupportsCancellation = cancelEnable
+    bgWorkerThread.WorkerReportsProgress = true
+
+    fn doTheWorkBaby =
+    (
+       --do stuff here
+    )
+
+    dotNet.addEventHandler bgWorkerThread "DoWork" doTheWorkBaby
+    bgWorkerThread.RunWorkerAsync()
+)

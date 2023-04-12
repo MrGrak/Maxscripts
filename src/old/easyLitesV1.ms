@@ -1,0 +1,745 @@
+--easyLites
+--builds interactive lightrigs
+--by garrickcampsey (JAN.2011) - garrick@garrickcampsey.com
+
+--TODO
+--link UI to script values
+	--code ran color buttons to work
+	--code min and max values to send and inherit script values
+	--intensity spinner should interactively update in the viewport
+	--option to prep scene for scanline:lighttracer or mentalRay:ao
+	--link light targets and skylight to lightRig ring
+
+--code presets for lightRig dropdown
+--for standard render
+	--build a skylight and setup light-tracer automatically, preset rendering widthXheight 1280x720
+	--setup default materials, assign to objects, build ground plane as matte/shadow or groundMAT
+--for mental ray
+	--setup AO materials, faked GI, etc..
+
+
+
+( --start script
+global easyLitesRollout
+try destroyDialog easyLitesRollout catch()
+--script values
+local lightRigDistance = 2 --default 2, twice the size of the selection's boundingBox
+local linkLitesCheck = true --determines if lights are linked to circle lite rig
+local myFirstLightIntensity = 100
+local mySecondLightIntensity = 50
+local myThirdLightIntensity = 50
+local myFourthLightIntensity = 50
+local litesOnCheckSum = "0000" --the num notate which lites should be built, default "1234"
+	--if only 1 on, checkSum = "1000", if 234 on, checksum = "0234", etc...
+local ranIntensityLitesCheckSum = "0000" --the num notate which lites should have random intensities
+local lite1ranIntMin = 100;local lite1ranIntMax = 200 --holds min and max value for intensity randomness
+local lite2ranIntMin = 60;local lite2ranIntMax = 120 --(per light)
+local lite3ranIntMin = 30;local lite3ranIntMax = 80
+local lite4ranIntMin = 30;local lite4ranIntMax = 80
+local lite1colorValue = (color 255 255 255) --light color defaults
+local lite2colorValue = (color 255 255 255) --light color defaults
+local lite3colorValue = (color 255 255 255) --light color defaults
+local lite4colorValue = (color 255 255 255) --light color defaults
+local ranColorLitesCheckSum = "0000" --the num notate which lites should have random colors
+local lite1shadowType = 4 --defaults to 4: 512 shadow map
+local lite2shadowType = 2 --defaults to 2: no shadow
+local lite3shadowType = 2 --defaults to 2: no shadow
+local lite4shadowType = 2 --defaults to 2: no shadow
+local ranPosLitesCheckSum = "1234" --the num notate which lites should have random positions (from rotate ring)
+local ranLiteRigDistance = false --switch, true = random number for lightRigDistance
+local ranLiteNumOnOff = false --switch, true = random number of lites made
+local darkestRandomColorMinimum = [100,100,100] --the darkest random color (determines black point from max white for random)
+local myFirstLight --in script scope for UI access
+local mySecondLight
+local myThirdLight
+local myFourthLight
+--
+local codeBlockCounter --tracks the fn, if error happens, user can send the code block #
+local introFeedbackText = "EasyLites says:\nI am EasyLites." --init feedback text
+local feedbackUpdate = undefined --string for feedback/stats update
+--
+
+--
+fn easyLitesFn = (
+--try (
+	--check scene for easyLite objs
+	try(select $EasyLitesLiteRigCircle;delete $)catch() --remove prior circle ctrl
+	try(select $EasyLitesLite1;delete $)catch() --remove prior lite
+	try(select $EasyLitesLite2;delete $)catch() --remove prior lite
+	try(select $EasyLitesLite3;delete $)catch() --remove prior lite
+	try(select $EasyLitesLite4;delete $)catch() --remove prior lite
+	try(select $EasyLitesSkylight;delete $)catch() --remove prior skylight	
+	--init
+	codeBlockCounter = 0
+	local PSAiBBboxHelper
+	local selectionBoundingBoxArray = #()
+	local paddedSelectionArray = #(0)
+	local allSceneNodes
+	local selectionAsArray
+	--if the selection is undefined then select all in scene
+	if $ == undefined then 
+	(
+		allSceneNodes = for node in rootNode.children collect node
+		join paddedSelectionArray allSceneNodes
+	--otherwise,  the user has something selected
+	) else	(
+			selectionAsArray = selection as array
+			join paddedSelectionArray selectionAsArray
+			)
+	local PSAcount = paddedSelectionArray.count
+	--**1
+	codeBlockCounter += 1
+	--
+	for i = 2 to PSAcount do --skip the padded 0 array[1] value
+	(
+		--get the bounding box for each object, make BboxCopy
+		local PSApivotsave = paddedSelectionArray[i].pivot --save paddedSelectionArray[i]'s pivot
+		CenterPivot paddedSelectionArray[i]
+		local PSAiBBsize = paddedSelectionArray[i].max - paddedSelectionArray[i].min
+		--build a helper box to the BB of the object
+		PSAiBBboxHelper = Box lengthsegs:1 widthsegs:1 heightsegs:1 \
+		length:PSAiBBsize[2] width:PSAiBBsize[1] height:PSAiBBsize[3] \
+		mapcoords:on pos:[0,0,0] isSelected:off
+		--align
+		PSAiBBboxHelper.pos = paddedSelectionArray[i].pos
+		PSAiBBboxHelper.pos.z += -(PSAiBBboxHelper.height/2) --center the boxhelper
+		paddedSelectionArray[i].pivot = PSApivotsave --set the pivot back to original pos
+		convertToMesh PSAiBBboxHelper
+		--put Bbox copy into array to process later
+		join selectionBoundingBoxArray PSAiBBboxHelper
+	)
+	--**2
+	codeBlockCounter += 1
+	local theCopy = copy PSAiBBboxHelper
+	--attach all BboxCopies, get boundingBox for attached boxes
+	for i = 1 to selectionBoundingBoxArray.count do	(meshop.attach theCopy selectionBoundingBoxArray[i])
+	--get theCopy's boundingBox, this BoundingBox is the selectionsBoundingBox
+	CenterPivot theCopy
+	local theCopyBBsize = theCopy.max - theCopy.min
+	local theCopyBBboxHelper = Box lengthsegs:1 widthsegs:1 heightsegs:1 \
+	length:theCopyBBsize[2] width:theCopyBBsize[1] height:theCopyBBsize[3] \
+	mapcoords:on pos:[0,0,0] isSelected:off
+	theCopyBBboxHelper.pos = theCopy.pos
+	theCopyBBboxHelper.pos.z += -(theCopyBBboxHelper.height/2)
+	CenterPivot theCopyBBboxHelper
+	delete theCopy
+	theCopyBBboxHelper.xray = on;theCopyBBboxHelper.renderable = off
+	--**3
+	codeBlockCounter += 1
+	--
+	
+	--build lights in proportion and distance to selectionsBoundingBox
+	select theCopyBBboxHelper
+	local myLightRingCircle
+	--get the width & length of theCopyBBboxHelper, build light rig circle to largest value
+	if theCopyBBboxHelper.width > theCopyBBboxHelper.length then (myLightRingCircle = Circle radius:(theCopyBBboxHelper.width*lightRigDistance) pos:theCopyBBboxHelper.pos) 
+	else (myLightRingCircle = Circle radius:(theCopyBBboxHelper.length*lightRigDistance) pos:theCopyBBboxHelper.pos)
+	--random radius if distance is set to random
+	local lightRigDistanceRandom = random 1.0 10.0
+	if ranLiteRigDistance == true then (myLightRingCircle.radius = theCopyBBboxHelper.length*lightRigDistanceRandom)
+	--**4
+	codeBlockCounter += 1
+	--name myLightRingCircle
+	myLightRingCircle.name = "EasyLitesLiteRigCircle";myLightRingCircle.wirecolor = (color 255 255 255)
+	--get max of theLightRingCirclesize, use this value to adjust light's x & y position
+	local theLightRingCirclesize = (myLightRingCircle.max - myLightRingCircle.min)
+	local myLightBuildPOS = (theLightRingCirclesize[2]/2.6)
+	
+	--BUILD LIGHTS
+	--litesOnCheckSum = "1234"
+	local checkLite1on = findString litesOnCheckSum "1"
+	local checkLite2on = findString litesOnCheckSum "2"
+	local checkLite3on = findString litesOnCheckSum "3"
+	local checkLite4on = findString litesOnCheckSum "4"
+	--
+	--**5
+	codeBlockCounter += 1
+	if checkLite1on != undefined then 
+	(--build 1st light
+	myFirstLight = targetSpot rgb:lite1colorValue multiplier:myFirstLightIntensity \
+		pos:[myLightBuildPOS+myLightRingCircle.pos.x,myLightBuildPOS+myLightRingCircle.pos.y,myLightBuildPOS] \
+		target:(Targetobject transform:(matrix3 [1,0,0] [0,1,0] [0,0,1] [0,0,0]))
+		myFirstLight.target.pos = theCopyBBboxHelper.pos
+		myFirstLight.attenDecay = 3;myFirstLight.name = "EasyLitesLite1"
+		--randomize light intensity code
+		--ranIntensityLitesCheckSum = "1234"
+		local ranIntLite1 = findString ranIntensityLitesCheckSum "1"
+		if ranIntLite1 != undefined then 
+		(
+		myFirstLight.multiplier = random lite1ranIntMin lite1ranIntMax
+		myFirstLightIntensity = myFirstLight.multiplier
+		)	
+		--randomize color 
+		--ranColorLitesCheckSum = "1234"
+		local ranColLite1 = findString ranColorLitesCheckSum "1"
+		if ranColLite1 != undefined then 
+		(
+		myFirstLight.rgb = random darkestRandomColorMinimum [255,255,255]
+		lite1colorValue = myFirstLight.rgb
+		)
+		--randomize position code
+		local ranPosLite1 = findString ranPosLitesCheckSum "1" --ranPosLitesCheckSum = "1234"
+		if ranPosLite1 != undefined then
+		(local myRanRot = (random -360 360)
+		myFirstLight.parent = myLightRingCircle;rotate myLightRingCircle (angleaxis myRanRot [0,0,1])
+		--**********************************************************************
+		--the first light is the main light, these determine height
+		--myFirstLight.pos.z = random -myLightBuildPOS myLightBuildPOS
+		--myFirstLight.pos.z = random 0 myLightBuildPOS
+		myFirstLight.pos.z = random (myLightBuildPOS*0.5) (myLightBuildPOS*2)
+		--**********************************************************************
+		myFirstLight.parent = undefined)
+		
+		--assign shadow presets
+		--lite1shadowType = 2 --defaults to 2: no shadow
+		if lite1shadowType == 2 then 
+		(--do not assign a shadow
+		myFirstLight.baseObject.castShadows = false)
+		if lite1shadowType == 3 then 
+			(myFirstLight.shadowGenerator = raytraceShadow())
+		if lite1shadowType == 4 then 
+			(myFirstLight.shadowGenerator = shadowMap()
+			myFirstLight.baseObject.castShadows = true
+			myFirstLight.mapsize = 1024;myFirstLight.mapbias = 0.1)
+		
+		--myFirstLight.shadowGenerator =Area_Shadows()
+		
+		 
+		
+	)
+	--**6
+	codeBlockCounter += 1
+	if checkLite2on != undefined then 
+	(--build 2nd light
+	mySecondLight = targetSpot rgb:lite2colorValue multiplier:mySecondLightIntensity \
+		pos:[myLightBuildPOS+myLightRingCircle.pos.x,myLightBuildPOS+myLightRingCircle.pos.y,myLightBuildPOS] \
+		target:(Targetobject transform:(matrix3 [1,0,0] [0,1,0] [0,0,1] [0,0,0]))
+		mySecondLight.target.pos = theCopyBBboxHelper.pos
+		mySecondLight.attenDecay = 3;mySecondLight.name = "EasyLitesLite2"
+		--randomize light intensity code
+		--ranIntensityLitesCheckSum = "1234"
+		local ranIntLite2 = findString ranIntensityLitesCheckSum "2"
+		if ranIntLite2 != undefined then 
+		(
+		mySecondLight.multiplier = random lite2ranIntMin lite2ranIntMax
+		mySecondLightIntensity = mySecondLight.multiplier
+		)
+		--randomize color 
+		--coderanColorLitesCheckSum = "1234"
+		local ranColLite2 = findString ranColorLitesCheckSum "2"
+		if ranColLite2 != undefined then 
+		(mySecondLight.rgb = random darkestRandomColorMinimum [255,255,255]
+		lite2colorValue = mySecondLight.rgb)
+		--randomize position code
+		local ranPosLite2 = findString ranPosLitesCheckSum "2" --ranPosLitesCheckSum = "1234"
+		if ranPosLite2 != undefined then
+		(local myRanRot = (random -360 360)
+		mySecondLight.parent = myLightRingCircle;rotate myLightRingCircle (angleaxis myRanRot [0,0,1])
+		--mySecondLight.pos.z = random -myLightBuildPOS myLightBuildPOS
+		mySecondLight.pos.z = random 0 myLightBuildPOS
+		mySecondLight.parent = undefined)
+		
+		--assign shadow presets
+		--lite2shadowType = 2 --defaults to 2: no shadow
+		if lite2shadowType == 2 then 
+		(--do not assign a shadow
+		mySecondLight.baseObject.castShadows = false)
+		if lite2shadowType == 4 then 
+			(mySecondLight.shadowGenerator = shadowMap()
+			mySecondLight.baseObject.castShadows = true
+			mySecondLight.mapsize = 1024;mySecondLight.mapbias = 0.1)
+		if lite2shadowType == 3 then 
+			(mySecondLight.shadowGenerator = raytraceShadow())
+		--mySecondLight.shadowGenerator =Area_Shadows()
+		
+	)
+	--**7
+	codeBlockCounter += 1
+	if checkLite3on != undefined then 
+	(--build 3rd light
+	myThirdLight = targetSpot rgb:lite3colorValue multiplier:myThirdLightIntensity \
+		pos:[myLightBuildPOS+myLightRingCircle.pos.x,myLightBuildPOS+myLightRingCircle.pos.y,myLightBuildPOS] \
+		target:(Targetobject transform:(matrix3 [1,0,0] [0,1,0] [0,0,1] [0,0,0]))
+		myThirdLight.target.pos = theCopyBBboxHelper.pos
+		myThirdLight.attenDecay = 3;myThirdLight.name = "EasyLitesLite3"
+		--randomize light intensity code
+		--ranIntensityLitesCheckSum = "1234"
+		local ranIntLite3 = findString ranIntensityLitesCheckSum "3"
+		if ranIntLite3 != undefined then 
+		(
+		myThirdLight.multiplier = random lite3ranIntMin lite3ranIntMax
+		myThirdLightIntensity = myThirdLight.multiplier
+		)
+		--randomize color 
+		--coderanColorLitesCheckSum = "1234"
+		local ranColLite3 = findString ranColorLitesCheckSum "3"
+		if ranColLite3 != undefined then 
+		(myThirdLight.rgb = random darkestRandomColorMinimum [255,255,255]
+		lite3colorValue = myThirdLight.rgb)
+		--randomize position code
+		local ranPosLite3 = findString ranPosLitesCheckSum "3" --ranPosLitesCheckSum = "1234"
+		if ranPosLite3 != undefined then
+		(local myRanRot = (random -360 360)
+		myThirdLight.parent = myLightRingCircle;rotate myLightRingCircle (angleaxis myRanRot [0,0,1])
+		myThirdLight.pos.z = random -myLightBuildPOS myLightBuildPOS;myThirdLight.parent = undefined)
+		
+		--assign shadow presets
+		--lite3shadowType = 2 --defaults to 2: no shadow
+		if lite3shadowType == 2 then 
+		(--do not assign a shadow
+		myThirdLight.baseObject.castShadows = false)
+		if lite3shadowType == 4 then 
+			(myThirdLight.shadowGenerator = shadowMap()
+			myThirdLight.baseObject.castShadows = true
+			myThirdLight.mapsize = 1024;myThirdLight.mapbias = 0.1)
+		if lite3shadowType == 3 then 
+			(myThirdLight.shadowGenerator = raytraceShadow())
+		--myThirdLight.shadowGenerator =Area_Shadows()
+		
+	)
+	--**8
+	codeBlockCounter += 1
+	if checkLite4on != undefined then 
+	(--build 4th light
+	myFourthLight = targetSpot rgb:lite4colorValue multiplier:myFourthLightIntensity \
+		pos:[myLightBuildPOS+myLightRingCircle.pos.x,myLightBuildPOS+myLightRingCircle.pos.y,myLightBuildPOS] \
+		target:(Targetobject transform:(matrix3 [1,0,0] [0,1,0] [0,0,1] [0,0,0]))
+		myFourthLight.target.pos = theCopyBBboxHelper.pos
+		myFourthLight.attenDecay = 3;myFourthLight.name = "EasyLitesLite4"
+		--randomize light intensity code
+		--ranIntensityLitesCheckSum = "1234"
+		local ranIntLite4 = findString ranIntensityLitesCheckSum "4"
+		if ranIntLite4 != undefined then 
+		(
+		myFourthLight.multiplier = random lite4ranIntMin lite4ranIntMax
+		myFourthLightIntensity = myFourthLight.multiplier
+		)
+		--randomize color 
+		--coderanColorLitesCheckSum = "1234"
+		local ranColLite4 = findString ranColorLitesCheckSum "4"
+		if ranColLite4 != undefined then 
+		(myFourthLight.rgb = random darkestRandomColorMinimum [255,255,255]
+		lite4colorValue = myFourthLight.rgb)
+		--randomize position code
+		local ranPosLite4 = findString ranPosLitesCheckSum "4" --ranPosLitesCheckSum = "1234"
+		if ranPosLite4 != undefined then 
+		(local myRanRot = (random -360 360)
+		myFourthLight.parent = myLightRingCircle;rotate myLightRingCircle (angleaxis myRanRot [0,0,1])
+		myFourthLight.pos.z = random -myLightBuildPOS myLightBuildPOS;myFourthLight.parent = undefined)
+		
+		--assign shadow presets
+		--lite3shadowType = 2 --defaults to 2: no shadow
+		if lite4shadowType == 2 then 
+		(--do not assign a shadow
+		myFourthLight.baseObject.castShadows = false)
+		if lite4shadowType == 4 then 
+			(myFourthLight.shadowGenerator = shadowMap()
+			myFourthLight.baseObject.castShadows = true
+			myFourthLight.mapsize = 1024;myFourthLight.mapbias = 0.1)
+		if lite4shadowType == 3 then 
+			(myFourthLight.shadowGenerator = raytraceShadow())
+		--myFourthLight.shadowGenerator =Area_Shadows()
+		
+	)
+	
+	--**9
+	codeBlockCounter += 1
+	--linkLitesCheck:link all lights back to lightRigCircle
+	if linkLitesCheck == true then 
+	(--try each, lights may not exist
+	try(myFirstLight.parent = myLightRingCircle)catch()
+	try(mySecondLight.parent = myLightRingCircle)catch()
+	try(myThirdLight.parent = myLightRingCircle)catch()
+	try(myFourthLight.parent = myLightRingCircle)catch()
+	)
+
+	
+	--RENDER PROPERTIES
+		--SCANLINE
+		--set skylight properties
+		local mySkylight = Skylight pos:[500,500,0] multiplier:0.25
+		mySkylight.name = "EasyLitesSkylight"
+		--add code to control multiplier via UI element
+		SceneRadiosity.Radiosity = Light_Tracer()
+		
+		--MENTALRAY
+		
+	
+	
+	
+	
+	
+	--set decay properties, where does the decay begin?  100 unit offset?
+	
+	--delete bb helper
+	delete theCopyBBboxHelper
+	
+	--set render output settings, set environment, etc...
+	--backgroundColor = color 112 112 112
+	
+	
+	--format string value for feedback
+	feedbackUpdate = "EasyLites says:\nCompleted " + codeBlockCounter as string + " of " + codeBlockCounter as string +" code blocks."
+--) catch(feedbackUpdate = "Error in code block: " + codeBlockCounter as string)
+)
+--UI
+rollout easyLitesRollout " EasyLites"
+(
+	--UI
+	button standardEasyLitesBTN "Build EasyLite Rig" pos:[5,5] width:319 height:20
+	dropdownlist presetsDD "Preset LightRigs" items:#("3 PointRig", "4 PointRig", "5 PointRig") selection:1 pos:[5,30] width:319
+	edittext feedbackBox text:introFeedbackText fieldWidth:319 height:100 pos:[2,570]
+	--
+	groupBox rigPropGroup "Rig Properties" pos:[5,75] width:319 height:45 
+	spinner scaleAmountSPN "Rig Distance : " range:[0,10,2.00] type:#float fieldwidth:35 pos:[13,95]
+	on scaleAmountSPN entered do 
+		(lightRigDistance = scaleAmountSPN.value
+		easyLitesFn();try(feedbackBox.text = feedbackUpdate) catch())
+	checkbox linkLitesCHK "Link Lites to Rig" checked:true pos:[220,95]
+	on linkLitesCHK changed theState do 
+		(linkLitesCheck = theState
+		easyLitesFn();try(feedbackBox.text = feedbackUpdate) catch())
+	--
+	groupBox litesPropGroup "Light Properties" pos:[5,125] width:319 height:350 
+	--
+	checkbutton lite1BTN "Lite 1 OFF" checked:false pos:[14,145] width:300 height:20
+	spinner lite1intensitySPN "Intensity:" range:[0,1000,1.00] type:#float fieldwidth:45 pos:[12,168] enabled:false
+	checkbutton lite1ranIntBTN "Ran" checked:false pos:[114,168] width:30 height:16 enabled:false
+	spinner lite1intensityminSPN "min:" range:[0,1000,100.00] type:#float fieldwidth:45 pos:[154,168] enabled:false
+	spinner lite1intensitymaxSPN "max:" range:[0,1000,200.00] type:#float fieldwidth:45 pos:[235,168] enabled:false
+	colorpicker lite1color "Color:" color:[255,255,255] fieldWidth:65 height:16 pos:[14,193] enabled:false
+	checkbutton lite1ranColBTN "Ran" checked:false pos:[114,193] width:30 height:16 enabled:false
+	dropdownlist lite1shadowpresetsDD items:#("Shadow...", "Shadows OFF","RayTraced Shadows", "ShadowMap512",\
+	"ShadowMap1K", "ShadowMap2K", "ShadowMap4K") selection:1 pos:[156,188] width:158 enabled:false
+	--
+	on lite1BTN changed theState do 
+	(
+		if theState == true then 
+		(lite1BTN.text = "Lite 1 ON";lite1intensitySPN.enabled = true;lite1ranIntBTN.enabled = true
+		lite1color.enabled = true;lite1ranColBTN.enabled = true;lite1shadowpresetsDD.enabled = true
+		litesOnCheckSum[1] = "1" --on
+		lite1colorValue = lite1color.color
+		lite1shadowType = lite1shadowpresetsDD.selection
+		
+		) else 	(
+		lite1BTN.text = "Lite 1 OFF";lite1intensitySPN.enabled = false;lite1ranIntBTN.enabled = false;lite1color.enabled = false
+		lite1ranColBTN.enabled = false;	lite1shadowpresetsDD.enabled = false;lite1ranIntBTN.state = false;lite1ranColBTN.state = false;
+		lite1intensityminSPN.enabled = false;lite1intensitymaxSPN.enabled = false
+		litesOnCheckSum[1] = "0" --off
+		
+		)
+	)
+	on lite1ranIntBTN changed theState do 
+	(if theState == true then 
+		(
+		lite1intensitySPN.enabled = false;lite1intensityminSPN.enabled = true;lite1intensitymaxSPN.enabled = true
+		ranIntensityLitesCheckSum[1] = "1" --on
+		) else (
+		lite1intensitySPN.enabled = true;lite1intensityminSPN.enabled = false;lite1intensitymaxSPN.enabled = false
+		ranIntensityLitesCheckSum[1] = "0" --off
+		)
+	)
+	--
+	on lite1ranColBTN changed theState do 
+	(
+		if theState == true then 
+		(lite1color.enabled = false;ranColorLitesCheckSum[1] = "1") 
+		else 
+		(lite1color.enabled = true;ranColorLitesCheckSum[1] = "0")
+	)
+	on lite1intensitySPN entered do (myFirstLightIntensity = lite1intensitySPN.value;myFirstLight.multiplier = myFirstLightIntensity)
+	on lite1intensityminSPN entered do (lite1ranIntMin = lite1intensityminSPN.value)
+	on lite1intensitymaxSPN entered do (lite1ranIntMax = lite1intensitymaxSPN.value)
+	on lite1color changed theState do (lite1colorValue = lite1color.color;try(myFirstLight.rgb = lite1colorValue)catch())
+	on lite1shadowpresetsDD selected i do 
+	(
+		lite1shadowType = lite1shadowpresetsDD.selection
+		if lite1shadowpresetsDD.items[i] == "Shadow..." then (try(myFirstLight.baseObject.castShadows=false)catch())
+		if lite1shadowpresetsDD.items[i] == "Shadows OFF" then (try(myFirstLight.baseObject.castShadows=false)catch())
+		if lite1shadowpresetsDD.items[i] == "RayTraced Shadows" then (try(myFirstLight.shadowGenerator = raytraceShadow())catch())
+		if lite1shadowpresetsDD.items[i] == "ShadowMap512" then (try(myFirstLight.baseObject.castShadows=true;myFirstLight.shadowGenerator = shadowMap();myFirstLight.mapsize = 512;myFirstLight.mapbias = 0.1)catch())
+		if lite1shadowpresetsDD.items[i] == "ShadowMap1K" then (try(myFirstLight.baseObject.castShadows=true;myFirstLight.shadowGenerator = shadowMap();myFirstLight.mapsize = 1024;myFirstLight.mapbias = 0.1)catch())
+		if lite1shadowpresetsDD.items[i] == "ShadowMap2K" then (try(myFirstLight.baseObject.castShadows=true;myFirstLight.shadowGenerator = shadowMap();myFirstLight.mapsize = 2048;myFirstLight.mapbias = 0.1)catch())
+		if lite1shadowpresetsDD.items[i] == "ShadowMap4K" then (try(myFirstLight.baseObject.castShadows=true;myFirstLight.shadowGenerator = shadowMap();myFirstLight.mapsize = 4096;myFirstLight.mapbias = 0.1)catch())
+	)
+	
+	
+	
+	
+	
+	
+	--	
+	label lightSetDivide1 "---------------------------------------------------------------------------------------------------" pos:[14,212] width:300 height:17
+	--Lite set 2 (+85px)
+	checkbutton lite2BTN "Lite 2 OFF" checked:false pos:[14,230] width:300 height:20
+	spinner lite2intensitySPN "Intensity:" range:[0,1000,1.00] type:#float fieldwidth:45 pos:[12,253] enabled:false
+	checkbutton lite2ranIntBTN "Ran" checked:false pos:[114,253] width:30 height:16 enabled:false
+	spinner lite2intensityminSPN "min:" range:[0,1000,60.00] type:#float fieldwidth:45 pos:[154,253] enabled:false
+	spinner lite2intensitymaxSPN "max:" range:[0,1000,120.00] type:#float fieldwidth:45 pos:[235,253] enabled:false
+	colorpicker lite2color "Color:" color:[255,255,255] fieldWidth:65 height:16 pos:[14,278] enabled:false
+	checkbutton lite2ranColBTN "Ran" checked:false pos:[114,278] width:30 height:16 enabled:false
+	dropdownlist lite2shadowpresetsDD items:#("Shadow...", "Shadows OFF","RayTraced Shadows", "ShadowMap512",\
+	"ShadowMap1K", "ShadowMap2K", "ShadowMap4K") selection:1 pos:[156,273] width:158 enabled:false
+	--
+	on lite2BTN changed theState do 
+	(
+		if theState == true then 
+		(lite2BTN.text = "Lite 2 ON";lite2intensitySPN.enabled = true;lite2ranIntBTN.enabled = true;lite2color.enabled = true
+		lite2ranColBTN.enabled = true;lite2shadowpresetsDD.enabled = true
+		litesOnCheckSum[2] = "2" --on
+		lite2colorValue = lite2color.color
+		lite2shadowType = lite2shadowpresetsDD.selection
+		) else 	(
+		lite2BTN.text = "Lite 2 OFF";lite2intensitySPN.enabled = false;lite2ranIntBTN.enabled = false;lite2color.enabled = false
+		lite2ranColBTN.enabled = false;	lite2shadowpresetsDD.enabled = false;lite2ranIntBTN.state = false;lite2ranColBTN.state = false;
+		lite2intensityminSPN.enabled = false;lite2intensitymaxSPN.enabled = false
+		litesOnCheckSum[2] = "0" --off
+		)
+	)
+	on lite2ranIntBTN changed theState do 
+	(if theState == true then 
+		(
+		lite2intensitySPN.enabled = false;lite2intensityminSPN.enabled = true;lite2intensitymaxSPN.enabled = true
+		ranIntensityLitesCheckSum[2] = "2" --on
+		) else (
+		lite2intensitySPN.enabled = true;lite2intensityminSPN.enabled = false;lite2intensitymaxSPN.enabled = false
+		ranIntensityLitesCheckSum[2] = "0" --off
+		)
+	)
+	on lite2ranColBTN changed theState do 
+	(
+		if theState == true then 
+		(lite2color.enabled = false;ranColorLitesCheckSum[2] = "2") 
+		else 
+		(lite2color.enabled = true;ranColorLitesCheckSum[2] = "0")
+	)
+	on lite2intensitySPN entered do (mySecondLightIntensity = lite2intensitySPN.value;mySecondLight.multiplier = mySecondLightIntensity)
+	on lite2intensityminSPN entered do (lite2ranIntMin = lite2intensityminSPN.value)
+	on lite2intensitymaxSPN entered do (lite2ranIntMax = lite2intensitymaxSPN.value)
+	on lite2color changed theState do (lite2colorValue = lite2color.color;try(mySecondLight.rgb = lite2colorValue)catch())
+	on lite2shadowpresetsDD selected i do 
+	(
+		lite2shadowType = lite2shadowpresetsDD.selection
+		if lite2shadowpresetsDD.items[i] == "Shadow..." then (try(mySecondLight.baseObject.castShadows=false)catch())
+		if lite2shadowpresetsDD.items[i] == "Shadows OFF" then (try(mySecondLight.baseObject.castShadows=false)catch())
+		if lite2shadowpresetsDD.items[i] == "RayTraced Shadows" then (try(mySecondLight.shadowGenerator = raytraceShadow())catch())
+		if lite2shadowpresetsDD.items[i] == "ShadowMap512" then (try(mySecondLight.baseObject.castShadows=true;mySecondLight.shadowGenerator = shadowMap();mySecondLight.mapsize = 512;mySecondLight.mapbias = 0.1)catch())
+		if lite2shadowpresetsDD.items[i] == "ShadowMap1K" then (try(mySecondLight.baseObject.castShadows=true;mySecondLight.shadowGenerator = shadowMap();mySecondLight.mapsize = 1024;mySecondLight.mapbias = 0.1)catch())
+		if lite2shadowpresetsDD.items[i] == "ShadowMap2K" then (try(mySecondLight.baseObject.castShadows=true;mySecondLight.shadowGenerator = shadowMap();mySecondLight.mapsize = 2048;mySecondLight.mapbias = 0.1)catch())
+		if lite2shadowpresetsDD.items[i] == "ShadowMap4K" then (try(mySecondLight.baseObject.castShadows=true;mySecondLight.shadowGenerator = shadowMap();mySecondLight.mapsize = 4096;mySecondLight.mapbias = 0.1)catch())
+	)
+	
+	
+	
+	--
+	label lightSetDivide2 "---------------------------------------------------------------------------------------------------" pos:[14,297] width:300 height:17
+	--Lite set 3 (+85px)
+	checkbutton lite3BTN "Lite 3 OFF" checked:false pos:[14,315] width:300 height:20
+	spinner lite3intensitySPN "Intensity:" range:[0,1000,1.00] type:#float fieldwidth:45 pos:[12,338] enabled:false
+	checkbutton lite3ranIntBTN "Ran" checked:false pos:[114,338] width:30 height:16 enabled:false
+	spinner lite3intensityminSPN "min:" range:[0,1000,30.0] type:#float fieldwidth:45 pos:[154,338] enabled:false
+	spinner lite3intensitymaxSPN "max:" range:[0,1000,80.00] type:#float fieldwidth:45 pos:[235,338] enabled:false
+	colorpicker lite3color "Color:" color:[255,255,255] fieldWidth:65 height:16 pos:[14,363] enabled:false
+	checkbutton lite3ranColBTN "Ran" checked:false pos:[114,363] width:30 height:16 enabled:false
+	dropdownlist lite3shadowpresetsDD items:#("Shadow...", "Shadows OFF","RayTraced Shadows", "ShadowMap512",\
+	"ShadowMap1K", "ShadowMap2K", "ShadowMap4K") selection:1 pos:[156,358] width:158 enabled:false
+	--
+	on lite3BTN changed theState do 
+	(
+		if theState == true then 
+		(lite3BTN.text = "Lite 3 ON";lite3intensitySPN.enabled = true;lite3ranIntBTN.enabled = true;lite3color.enabled = true
+		lite3ranColBTN.enabled = true;lite3shadowpresetsDD.enabled = true
+		litesOnCheckSum[3] = "3" --on
+		lite3colorValue = lite3color.color
+		lite3shadowType = lite3shadowpresetsDD.selection
+		) else 	(
+		lite3BTN.text = "Lite 1 OFF";lite3intensitySPN.enabled = false;lite3ranIntBTN.enabled = false;lite3color.enabled = false
+		lite3ranColBTN.enabled = false;	lite3shadowpresetsDD.enabled = false;lite3ranIntBTN.state = false;lite3ranColBTN.state = false;
+		lite3intensityminSPN.enabled = false;lite3intensitymaxSPN.enabled = false
+		litesOnCheckSum[3] = "0" --off
+		)
+	)
+	on lite3ranIntBTN changed theState do 
+	(
+		if theState == true then 
+		(
+		lite3intensitySPN.enabled = false;lite3intensityminSPN.enabled = true;lite3intensitymaxSPN.enabled = true
+		ranIntensityLitesCheckSum[3] = "3" --on 
+		) else (
+		lite3intensitySPN.enabled = true;lite3intensityminSPN.enabled = false;lite3intensitymaxSPN.enabled = false
+		ranIntensityLitesCheckSum[3] = "0" --off
+		)
+	)
+	on lite3ranColBTN changed theState do 
+	(
+		if theState == true then 
+		(lite3color.enabled = false;ranColorLitesCheckSum[3] = "3") 
+		else 
+		(lite3color.enabled = true;ranColorLitesCheckSum[3] = "0")
+	)
+	on lite3intensitySPN entered do (myThirdLightIntensity = lite3intensitySPN.value;myThirdLight.multiplier = myThirdLightIntensity)
+	on lite3intensityminSPN entered do (lite3ranIntMin = lite3intensityminSPN.value)
+	on lite3intensitymaxSPN entered do (lite3ranIntMax = lite3intensitymaxSPN.value)
+	on lite3color changed theState do (lite3colorValue = lite3color.color;try(myThirdLight.rgb = lite3colorValue)catch())
+	on lite3shadowpresetsDD selected i do 
+	(
+		lite3shadowType = lite3shadowpresetsDD.selection
+		if lite3shadowpresetsDD.items[i] == "Shadow..." then (try(myThirdLight.baseObject.castShadows=false)catch())
+		if lite3shadowpresetsDD.items[i] == "Shadows OFF" then (try(myThirdLight.baseObject.castShadows=false)catch())
+		if lite3shadowpresetsDD.items[i] == "RayTraced Shadows" then (try(myThirdLight.shadowGenerator = raytraceShadow())catch())
+		if lite3shadowpresetsDD.items[i] == "ShadowMap512" then (try(myThirdLight.baseObject.castShadows=true;myThirdLight.shadowGenerator = shadowMap();myThirdLight.mapsize = 512;myThirdLight.mapbias = 0.1)catch())
+		if lite3shadowpresetsDD.items[i] == "ShadowMap1K" then (try(myThirdLight.baseObject.castShadows=true;myThirdLight.shadowGenerator = shadowMap();myThirdLight.mapsize = 1024;myThirdLight.mapbias = 0.1)catch())
+		if lite3shadowpresetsDD.items[i] == "ShadowMap2K" then (try(myThirdLight.baseObject.castShadows=true;myThirdLight.shadowGenerator = shadowMap();myThirdLight.mapsize = 2048;myThirdLight.mapbias = 0.1)catch())
+		if lite3shadowpresetsDD.items[i] == "ShadowMap4K" then (try(myThirdLight.baseObject.castShadows=true;myThirdLight.shadowGenerator = shadowMap();myThirdLight.mapsize = 4096;myThirdLight.mapbias = 0.1)catch())
+	)
+	
+	
+	--
+	label lightSetDivide3 "---------------------------------------------------------------------------------------------------" pos:[14,382] width:300 height:17
+	--Lite set 4 (+85px)
+	checkbutton lite4BTN "Lite 4 OFF" checked:false pos:[14,400] width:300 height:20
+	spinner lite4intensitySPN "Intensity:" range:[0,1000,1.00] type:#float fieldwidth:45 pos:[12,423] enabled:false
+	checkbutton lite4ranIntBTN "Ran" checked:false pos:[114,423] width:30 height:16 enabled:false
+	spinner lite4intensityminSPN "min:" range:[0,1000,30.00] type:#float fieldwidth:45 pos:[154,423] enabled:false
+	spinner lite4intensitymaxSPN "max:" range:[0,1000,80.00] type:#float fieldwidth:45 pos:[235,423] enabled:false
+	colorpicker lite4color "Color:" color:[255,255,255] fieldWidth:65 height:16 pos:[14,448] enabled:false
+	checkbutton lite4ranColBTN "Ran" checked:false pos:[114,448] width:30 height:16 enabled:false
+	dropdownlist lite4shadowpresetsDD items:#("Shadow...", "Shadows OFF","RayTraced Shadows", "ShadowMap512",\
+	"ShadowMap1K", "ShadowMap2K", "ShadowMap4K") selection:1 pos:[156,443] width:158 enabled:false
+	--
+	on lite4BTN changed theState do 
+	(
+		if theState == true then 
+		(lite4BTN.text = "Lite 1 ON";lite4intensitySPN.enabled = true;lite4ranIntBTN.enabled = true;lite4color.enabled = true
+		lite4ranColBTN.enabled = true;lite4shadowpresetsDD.enabled = true
+		litesOnCheckSum[4] = "4" --on
+		lite4colorValue = lite4color.color
+		lite4shadowType = lite4shadowpresetsDD.selection
+		) else 	(
+		lite4BTN.text = "Lite 1 OFF";lite4intensitySPN.enabled = false;lite4ranIntBTN.enabled = false;lite4color.enabled = false
+		lite4ranColBTN.enabled = false;	lite4shadowpresetsDD.enabled = false;lite4ranIntBTN.state = false;lite4ranColBTN.state = false;
+		lite4intensityminSPN.enabled = false;lite4intensitymaxSPN.enabled = false
+		litesOnCheckSum[4] = "1" --off
+		)
+	)
+	on lite4ranIntBTN changed theState do 
+	(if theState == true then 
+		(
+		lite4intensitySPN.enabled = false;lite4intensityminSPN.enabled = true;lite4intensitymaxSPN.enabled = true
+		ranIntensityLitesCheckSum[4] = "4" --on
+		) else (
+		lite4intensitySPN.enabled = true;lite4intensityminSPN.enabled = false;lite4intensitymaxSPN.enabled = false
+		ranIntensityLitesCheckSum[4] = "0" --off
+		)
+	)
+	on lite4ranColBTN changed theState do 
+	(
+		if theState == true then 
+		(lite4color.enabled = false;ranColorLitesCheckSum[4] = "4") 
+		else 
+		(lite4color.enabled = true;ranColorLitesCheckSum[4] = "0")
+	)
+	on lite4intensitySPN entered do (myFourthLightIntensity = lite4intensitySPN.value;myFourthLight.multiplier = myFourthLightIntensity)
+	on lite4intensityminSPN entered do (lite4ranIntMin = lite4intensityminSPN.value)
+	on lite4intensitymaxSPN entered do (lite4ranIntMax = lite4intensitymaxSPN.value)
+	on lite4color changed theState do (lite4colorValue = lite4color.color;try(myThirdLight.rgb = lite3colorValue)catch())
+	on lite4shadowpresetsDD selected i do 
+	(
+		lite4shadowType = lite4shadowpresetsDD.selection
+		if lite4shadowpresetsDD.items[i] == "Shadow..." then (try(myFourthLight.baseObject.castShadows=false)catch())
+		if lite4shadowpresetsDD.items[i] == "Shadows OFF" then (try(myFourthLight.baseObject.castShadows=false)catch())
+		if lite4shadowpresetsDD.items[i] == "RayTraced Shadows" then (try(myFourthLight.shadowGenerator = raytraceShadow())catch())
+		if lite4shadowpresetsDD.items[i] == "ShadowMap512" then (try(myFourthLight.baseObject.castShadows=true;myFourthLight.shadowGenerator = shadowMap();myFourthLight.mapsize = 512;myFourthLight.mapbias = 0.1)catch())
+		if lite4shadowpresetsDD.items[i] == "ShadowMap1K" then (try(myFourthLight.baseObject.castShadows=true;myFourthLight.shadowGenerator = shadowMap();myFourthLight.mapsize = 1024;myFourthLight.mapbias = 0.1)catch())
+		if lite4shadowpresetsDD.items[i] == "ShadowMap2K" then (try(myFourthLight.baseObject.castShadows=true;myFourthLight.shadowGenerator = shadowMap();myFourthLight.mapsize = 2048;myFourthLight.mapbias = 0.1)catch())
+		if lite4shadowpresetsDD.items[i] == "ShadowMap4K" then (try(myFourthLight.baseObject.castShadows=true;myFourthLight.shadowGenerator = shadowMap();myFourthLight.mapsize = 4096;myFourthLight.mapbias = 0.1)catch())
+	)
+	
+	
+	
+	--
+	groupBox randomPropGroup "Randomize Properties" pos:[5,480] width:319 height:65 
+	checkbutton randomizeOnBTN "Randomize ON" checked:false pos:[14,500] width:300 height:20
+	checkbox ranPosCHK "Position" checked:false pos:[14,525] enabled:false
+	checkbox ranColCHK "Color" checked:false pos:[76,525] enabled:false
+	checkbox ranIntCHK "Intensity" checked:false pos:[126,525] enabled:false
+	checkbox ranDisCHK "Distance" checked:false pos:[190,525] enabled:false
+	checkbox ranNumCHK "Number" checked:false pos:[257,525] enabled:false
+	--
+	on randomizeOnBTN changed theState do 
+	(
+		if theState == true then
+		(
+			ranPosCHK.enabled = true;ranColCHK.enabled = true;ranIntCHK.enabled = true
+			ranDisCHK.enabled = true;ranNumCHK.enabled = true
+		) else (
+			ranPosCHK.enabled = false;ranColCHK.enabled = false;ranIntCHK.enabled = false
+			ranDisCHK.enabled = false;ranNumCHK.enabled = false
+		)
+	)
+	on ranPosCHK changed theState do 
+		(if theState == true then
+		(ranPosLitesCheckSum = "1234"
+		) else (ranPosLitesCheckSum = "0000"))
+	on ranColCHK changed theState do 
+		(if theState == true then
+		(ranColorLitesCheckSum = "1234"
+		) else (ranColorLitesCheckSum = "0000"))
+	on ranIntCHK changed theState do 
+		(if theState == true then
+		(ranIntensityLitesCheckSum = "1234"
+		) else (ranIntensityLitesCheckSum = "0000"))
+	on ranDisCHK changed theState do 
+		(if theState == true then
+		(ranLiteRigDistance = true
+		) else (ranLiteRigDistance = false))
+	on ranNumCHK changed theState do 
+		(if theState == true then
+		(ranLiteNumOnOff = true
+		) else (ranLiteNumOnOff = false))
+	--
+	checkbox prepSceneCHK "Prep scene for render..." checked:false pos:[5,550] enabled:false
+	--main button event
+	on standardEasyLitesBTN pressed do 
+	(
+	
+	easyLitesFn()
+	try(feedbackBox.text = feedbackUpdate) catch()
+	--UPDATE ALL THE COLORPICKERS WITH THE SCRIPT VALUES*******
+	lite1color.color = lite1colorValue;lite2color.color = lite2colorValue
+	lite3color.color = lite3colorValue;lite4color.color = lite4colorValue
+	--UPDATE ALL THE INTENSITY SPINNERS WITH THE SCRIPT VALUES*******
+	lite1intensitySPN.value = myFirstLightIntensity;lite2intensitySPN.value = mySecondLightIntensity
+	lite3intensitySPN.value = myThirdLightIntensity;lite4intensitySPN.value = myFourthLightIntensity
+	
+	)
+	
+	
+	
+	
+	
+	--PRESETS Dropdown devents
+	on presetsDD selected i do 
+		(
+		if presetsDD.items[i] == "3 PointRig" then
+			(
+			--code...
+			)
+		else if presetsDD.items[i] == "4 PointRig" then
+			(
+			--code...
+			)
+		else if presetsDD.items[i] == "5 PointRig" then
+			(
+			--code...
+			)
+		)
+	--Grakscripts Standard UI & Events
+	
+	button launchBTN "Launch GrakScripts" pos:[5,675] width:302 height:20
+	on launchBTN pressed do	(try(fileIn "grakscripts.ms")catch(messagebox "Cannot find GrakScripts.ms"))
+	button whoIsBTN "?" pos:[311,675] width:15 height:20
+	on whoIsBTN pressed do (messagebox "Send errors to: Garrick@GarrickCampsey.com")
+)
+createDialog easyLitesRollout 330 700 100 100 lockWidth:true lockHeight:false style:#(#style_toolwindow, #style_sysmenu, #style_resizing)
+) --close script
